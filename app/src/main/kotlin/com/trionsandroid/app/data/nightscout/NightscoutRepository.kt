@@ -19,6 +19,12 @@ interface NightscoutRepository {
     suspend fun mostRecentConfirmedLoopAt(): java.time.Instant?
 
     /**
+     * When devicestatus was last fetched from Nightscout successfully in this process, or null if
+     * not yet. Lets the Not Looping alarm tell "no loop in Nightscout" from "couldn't reach it".
+     */
+    fun lastDeviceStatusFetchAt(): java.time.Instant?
+
+    /**
      * The reasoning for the reading at [readingTimestamp]: the first determination received from
      * shortly before it until just under the next reading. Null if none is cached.
      */

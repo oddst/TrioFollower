@@ -41,6 +41,9 @@ class NightscoutRepositoryImpl @Inject constructor(
 
     private val insulinProfile = MutableStateFlow<InsulinProfile?>(null)
 
+    @Volatile
+    private var lastDeviceStatusFetchMillis: Long? = null
+
     override fun observeGlucoseEntries(sinceMillis: Long): Flow<List<GlucoseReading>> =
         glucoseEntryDao.observeSince(sinceMillis).map { entries -> entries.map { it.toDomain() } }
 
@@ -68,6 +71,8 @@ class NightscoutRepositoryImpl @Inject constructor(
 
     override suspend fun mostRecentConfirmedLoopAt(): Instant? =
         deviceStatusDao.mostRecentReasonDateMillis()?.let { Instant.ofEpochMilli(it) }
+
+    override fun lastDeviceStatusFetchAt(): Instant? = lastDeviceStatusFetchMillis?.let { Instant.ofEpochMilli(it) }
 
     override suspend fun refresh(lookbackHours: Int, essential: Boolean): Result<Unit> {
         diagnosticLogger.log(TAG, "refresh() starting, lookbackHours=$lookbackHours essential=$essential")
@@ -144,6 +149,7 @@ class NightscoutRepositoryImpl @Inject constructor(
                 val merged = (dtosByDate + dtosByCreatedAt).distinctBy { it.stableId }
                 val storedDeviceStatus = merged.mapNotNull { it.toEntity() }
                 deviceStatusDao.upsertAll(storedDeviceStatus)
+                lastDeviceStatusFetchMillis = System.currentTimeMillis()
                 Triple(byDate.result.size, byCreatedAt.result.size, storedDeviceStatus.size)
             }.onSuccess { (byDate, byCreatedAt, stored) ->
                 diagnosticLogger.log(TAG, "DeviceStatus: byDate=$byDate byCreatedAt=$byCreatedAt stored=$stored")

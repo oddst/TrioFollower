@@ -164,15 +164,25 @@ class AlarmCheckRunner @Inject constructor(
                 siteRemaining.toMinutes() <= TimeUnit.HOURS.toMinutes(alarms.pumpChange.hoursThreshold.toLong()),
         ) { "Pump site time left: ${formatTimeRemaining(siteRemaining!!)}" }
 
-        val lastLoopAt = nightscoutRepository.mostRecentConfirmedLoopAt()
-        val minutesSinceLoop = lastLoopAt?.let { TimeUnit.MILLISECONDS.toMinutes(nowMillis - it.toEpochMilli()) }
-        evaluateSupplemental(
-            kind = SupplementalAlarmKind.NOT_LOOPING,
-            behavior = alarms.notLooping.behavior,
-            isActive = alarms.notLooping.enabled && isAllowedNow(alarms.notLooping.behavior, window, nowMinuteOfDay) &&
-                (minutesSinceLoop == null || minutesSinceLoop >= alarms.notLooping.minutes),
-        ) {
-            if (minutesSinceLoop == null) "No confirmed loop yet" else "No confirmed loop for $minutesSinceLoop min"
+        // Only judged on devicestatus fetched this cycle: if Nightscout couldn't be reached, the cache
+        // just stops advancing and would look like Trio stopped looping. That case is left to the No
+        // data alarm, and Not Looping is skipped (keeping its current state) until a fetch succeeds.
+        val lastFetchAt = nightscoutRepository.lastDeviceStatusFetchAt()
+        val deviceStatusFetchedNow = lastFetchAt != null &&
+            nowMillis - lastFetchAt.toEpochMilli() <= TimeUnit.MINUTES.toMillis(DEVICE_STATUS_FETCH_RECENT_MINUTES)
+        if (deviceStatusFetchedNow) {
+            val lastLoopAt = nightscoutRepository.mostRecentConfirmedLoopAt()
+            val minutesSinceLoop = lastLoopAt?.let { TimeUnit.MILLISECONDS.toMinutes(nowMillis - it.toEpochMilli()) }
+            evaluateSupplemental(
+                kind = SupplementalAlarmKind.NOT_LOOPING,
+                behavior = alarms.notLooping.behavior,
+                isActive = alarms.notLooping.enabled && isAllowedNow(alarms.notLooping.behavior, window, nowMinuteOfDay) &&
+                    (minutesSinceLoop == null || minutesSinceLoop >= alarms.notLooping.minutes),
+            ) {
+                if (minutesSinceLoop == null) "No confirmed loop yet" else "No confirmed loop for $minutesSinceLoop min"
+            }
+        } else if (alarms.notLooping.enabled) {
+            diagnosticLogger.log(TAG, "Not looping check skipped: no devicestatus fetched this cycle")
         }
 
         // The Trio (looping) phone's own battery, as it reports itself to Nightscout — not the
@@ -288,6 +298,8 @@ class AlarmCheckRunner @Inject constructor(
         const val RECENT_READING_WINDOW_MINUTES = 30L
         const val LATEST_LOOKBACK_HOURS = 6L
         const val DEVICE_STATUS_FRESHNESS_MINUTES = 30L
+        // Alarm checks run right after the refresh, so this only needs to cover that one cycle.
+        const val DEVICE_STATUS_FETCH_RECENT_MINUTES = 5L
         // Long enough to catch an overdue site/sensor change; matches the sync layer's own lookback.
         const val LIFECYCLE_LOOKBACK_DAYS = 30L
         val PREDICTED_HIGH_COOLDOWN_MILLIS = TimeUnit.MINUTES.toMillis(60)
